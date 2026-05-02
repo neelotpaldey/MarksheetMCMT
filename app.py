@@ -1,20 +1,28 @@
 import streamlit as st
 import pandas as pd
 
-# Future use (Google Sheets)
-'''import gspread
-from oauth2client.service_account import ServiceAccountCredentials'''
-
-
 def main():
     st.set_page_config(page_title="Student Report", layout="wide")
 
-    # Banner Image (Place banner.png in same folder)
-    st.image("banner.png", use_container_width=True)
+    # ---------------- PRINT STYLE ----------------
+    st.markdown("""
+    <style>
+    @media print {
+        header, footer, .stDeployButton, .stToolbar {
+            display: none !important;
+        }
+        button {
+            display: none !important;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
+    # ---------------- BANNER ----------------
+    st.image("banner.png", use_container_width=True)
     st.markdown("---")
 
-    # Student Info Section
+    # ---------------- STUDENT DETAILS ----------------
     st.subheader("Student Details")
 
     col1, col2 = st.columns(2)
@@ -30,10 +38,10 @@ def main():
 
     st.markdown("---")
 
-    # Attendance Section
+    # ---------------- ATTENDANCE ----------------
     st.subheader("Attendance")
 
-    attendance_data = pd.DataFrame({
+    attendance_df = pd.DataFrame({
         "Semester 2": ["", "", ""],
         "Semester 3": ["", "", ""],
         "Semester 4": ["", "", ""],
@@ -41,22 +49,39 @@ def main():
         "Semester 6": ["", "", ""],
     }, index=["Present", "Out of", "Percentage"])
 
-    st.dataframe(attendance_data, use_container_width=True)
+    attendance = st.data_editor(attendance_df, use_container_width=True)
 
     st.markdown("---")
 
-    # Result Section
+    # ---------------- RESULT ----------------
     st.subheader("Result")
 
-    result_data = pd.DataFrame({
-        "Subject": ["Subject 1", "Subject 2", "Subject 3", "Subject 4", "Subject 5", "Total", "Percentage"],
-        "Sessional": [""] * 7,
-        "PUT": [""] * 7,
-        "Subject Teacher": [""] * 7,
-        "Remark": [""] * 7
+    result_df = pd.DataFrame({
+        "Subject": ["Subject 1", "Subject 2", "Subject 3", "Subject 4", "Subject 5"],
+        "Sessional": [""] * 5,
+        "PUT": [""] * 5,
+        "Subject Teacher": [""] * 5,
+        "Remark": [""] * 5
     })
 
-    st.dataframe(result_data, use_container_width=True)
+    result = st.data_editor(result_df, use_container_width=True)
+
+    st.markdown("---")
+
+    # ---------------- PRINT BUTTON ----------------
+    st.markdown("""
+    <button onclick="window.print()" 
+    style="
+        background-color:#d90429;
+        color:white;
+        padding:12px 24px;
+        border:none;
+        border-radius:6px;
+        font-size:16px;
+        cursor:pointer;">
+        🖨️ Print / Save as PDF
+    </button>
+    """, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
