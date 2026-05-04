@@ -7,7 +7,8 @@ import unicodedata
 import streamlit.components.v1 as components
 
 # ---------------- CONFIG ----------------
-GOOGLE_SHEET_FILE_ID = "1MKgETtpCs4MOTL8ErQuPIjIR2peBXADx"
+MARKSHEET_FILE_ID = "1MKgETtpCs4MOTL8ErQuPIjIR2peBXADx"
+ATTENDANCE_FILE_ID = "1p9eBLQksJo_huyADppeFQ22nTIadmSqV"
 
 st.set_page_config(page_title="Marksheet", layout="wide")
 
@@ -93,9 +94,9 @@ def main():
     except:
         pass
 
-    # Load Sheets
-    xls = load_excel(GOOGLE_SHEET_FILE_ID)
-    parsed = [p for p in (parse_sheet(s) for s in xls.sheet_names) if p]
+    # Load sheets
+    marks_xls = load_excel(MARKSHEET_FILE_ID)
+    parsed = [p for p in (parse_sheet(s) for s in marks_xls.sheet_names) if p]
 
     # University
     uni = st.selectbox("University", ["--"] + sorted({u for u, y, o in parsed}))
@@ -107,26 +108,33 @@ def main():
 
     sheet = [o for u, y, o in parsed if u == uni and y == year][0]
 
-    df = read_sheet(GOOGLE_SHEET_FILE_ID, sheet)
-    df.columns = [str(c).strip() for c in df.columns]
+    # Load both sheets
+    marks_df = read_sheet(MARKSHEET_FILE_ID, sheet)
+    att_df = read_sheet(ATTENDANCE_FILE_ID, sheet)
+
+    marks_df.columns = [str(c).strip() for c in marks_df.columns]
+    att_df.columns = [str(c).strip() for c in att_df.columns]
 
     # Columns
-    student_col = find_column(df, ["student", "name"])
-    roll_col = find_column(df, ["roll"])
-    father_col = find_column(df, ["father"])
-    adm_col = find_column(df, ["admission"])
+    student_col = find_column(marks_df, ["student", "name"])
+    father_col = find_column(marks_df, ["father"])
+    adm_col = find_column(marks_df, ["admission"])
 
     if not student_col:
         st.error("Student column not found")
         return
 
-    # Student select
-    student = st.selectbox("Student", ["--"] + df[student_col].dropna().astype(str).tolist())
+    # Student selection
+    student = st.selectbox("Student", ["--"] + marks_df[student_col].dropna().astype(str).tolist())
     if student == "--": return
 
-    row = df[df[student_col].astype(str) == student].iloc[0]
+    row = marks_df[marks_df[student_col].astype(str) == student].iloc[0]
 
-    # ---------------- STUDENT INFO ----------------
+    # Match attendance row
+    att_row = att_df[att_df[student_col].astype(str) == student]
+    att_row = att_row.iloc[0] if not att_row.empty else None
+
+    # ---------------- STUDENT DETAILS ----------------
     st.subheader("👤 Student Details")
     st.write(f"**Name:** {row[student_col]}")
     if adm_col: st.write(f"**Admission No:** {row[adm_col]}")
@@ -135,20 +143,30 @@ def main():
     # ---------------- ATTENDANCE ----------------
     st.subheader("📅 Attendance")
 
-    attendance_df = pd.DataFrame({
-        " ": ["Present", "Out of", "Percentage"],
-        "Semester 2": [safe(row.get("I")), safe(row.get("I6")), safe_percent(row.get("J"))],
-        "Semester 3": [safe(row.get("S")), safe(row.get("S6")), safe_percent(row.get("T"))],
-        "Semester 4": [safe(row.get("AC")), safe(row.get("AC6")), safe_percent(row.get("AD"))],
-        "Semester 5": [safe(row.get("AM")), safe(row.get("AM6")), safe_percent(row.get("AN"))],
-        "Semester 6": [safe(row.get("AW")), safe(row.get("AW6")), safe_percent(row.get("AX"))],
-    })
+    if att_row is None:
+        attendance_df = pd.DataFrame({
+            " ": ["Present", "Out of", "Percentage"],
+            "Semester 2": ["N/A"]*3,
+            "Semester 3": ["N/A"]*3,
+            "Semester 4": ["N/A"]*3,
+            "Semester 5": ["N/A"]*3,
+            "Semester 6": ["N/A"]*3,
+        })
+    else:
+        attendance_df = pd.DataFrame({
+            " ": ["Present", "Out of", "Percentage"],
+            "Semester 2": [safe(att_row.get("I")), safe(att_row.get("I6")), safe_percent(att_row.get("J"))],
+            "Semester 3": [safe(att_row.get("S")), safe(att_row.get("S6")), safe_percent(att_row.get("T"))],
+            "Semester 4": [safe(att_row.get("AC")), safe(att_row.get("AC6")), safe_percent(att_row.get("AD"))],
+            "Semester 5": [safe(att_row.get("AM")), safe(att_row.get("AM6")), safe_percent(att_row.get("AN"))],
+            "Semester 6": [safe(att_row.get("AW")), safe(att_row.get("AW6")), safe_percent(att_row.get("AX"))],
+        })
 
     st.table(attendance_df)
 
     # ---------------- MARKS ----------------
-    sessional_cols = df.columns[16:21]
-    put_cols = df.columns[23:28]
+    sessional_cols = marks_df.columns[16:21]
+    put_cols = marks_df.columns[23:28]
 
     subjects, s_marks, p_marks = [], [], []
 
