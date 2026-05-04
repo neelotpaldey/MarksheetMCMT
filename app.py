@@ -13,54 +13,21 @@ ATTENDANCE_FILE_ID = "1p9eBLQksJo_huyADppeFQ22nTIadmSqV"
 st.set_page_config(page_title="Marksheet", layout="wide")
 
 
-# ---------------- GOOGLE SHEET ----------------
+# ---------------- LOAD ----------------
 @st.cache_data(ttl=300)
-def download_sheet(file_id):
+def download(file_id):
     url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
-    return r.content
+    return requests.get(url).content
 
 
-def load_excel(file_id):
-    return pd.ExcelFile(io.BytesIO(download_sheet(file_id)), engine="openpyxl")
-
-
-def read_sheet(file_id, sheet):
-    return pd.read_excel(
-        io.BytesIO(download_sheet(file_id)),
-        sheet_name=sheet,
-        skiprows=6,
-        engine="openpyxl"
-    )
+def read(file_id, sheet):
+    return pd.read_excel(io.BytesIO(download(file_id)), sheet_name=sheet, skiprows=6)
 
 
 # ---------------- HELPERS ----------------
-def to_float(val):
-    try:
-        if pd.isna(val): return None
-    except: pass
-    s = str(val).strip()
-    if s == "": return None
-    try:
-        return float(s.replace(",", "").replace("%", ""))
-    except:
-        return None
-
-
-def find_column(df, keys):
-    for col in df.columns:
-        c = col.strip().lower()
-        if any(k in c for k in keys):
-            return col
-    return None
-
-
-def parse_sheet(name):
-    parts = name.rsplit(" ", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        return parts[0], parts[1], name
-    return None
+def clean(val):
+    try: return str(val).strip().lower()
+    except: return ""
 
 
 def safe(val):
@@ -79,15 +46,23 @@ def safe_percent(val):
         return "N/A"
 
 
+def to_float(val):
+    try:
+        if pd.isna(val): return None
+    except: pass
+    try:
+        return float(str(val).replace(",", "").replace("%", ""))
+    except:
+        return None
+
+
 def format_mark(val):
     return "ABS" if val is None else val
 
 
-def clean(val):
-    try:
-        return str(val).strip().lower()
-    except:
-        return ""
+def parse_sheet(name):
+    parts = name.rsplit(" ", 1)
+    return (parts[0], parts[1], name) if len(parts)==2 and parts[1].isdigit() else None
 
 
 # ---------------- MAIN ----------------
@@ -99,182 +74,102 @@ def main():
     except:
         pass
 
-    # Load marksheet
-    marks_xls = load_excel(MARKSHEET_FILE_ID)
-    parsed = [p for p in (parse_sheet(s) for s in marks_xls.sheet_names) if p]
+    # Sheet selection
+    xls = pd.ExcelFile(io.BytesIO(download(MARKSHEET_FILE_ID)))
+    parsed = [p for p in (parse_sheet(s) for s in xls.sheet_names) if p]
 
-    uni = st.selectbox("University", ["--"] + sorted({u for u, y, o in parsed}))
+    uni = st.selectbox("University", ["--"] + sorted({u for u,y,o in parsed}))
     if uni == "--": return
 
-    year = st.selectbox("Admission Year", ["--"] + sorted({y for u, y, o in parsed if u == uni}))
+    year = st.selectbox("Admission Year", ["--"] + sorted({y for u,y,o in parsed if u==uni}))
     if year == "--": return
 
-    sheet = [o for u, y, o in parsed if u == uni and y == year][0]
+    sheet = [o for u,y,o in parsed if u==uni and y==year][0]
 
-    # Load both sheets
-    marks_df = read_sheet(MARKSHEET_FILE_ID, sheet)
-    att_df = read_sheet(ATTENDANCE_FILE_ID, sheet)
+    # Load data
+    marks_df = read(MARKSHEET_FILE_ID, sheet)
+    att_df = read(ATTENDANCE_FILE_ID, sheet)
 
     marks_df.columns = [str(c).strip() for c in marks_df.columns]
     att_df.columns = [str(c).strip() for c in att_df.columns]
 
-    # Detect columns
-    student_col = find_column(marks_df, ["student", "name"])
-    roll_col_marks = find_column(marks_df, ["roll"])
-    roll_col_att = find_column(att_df, ["roll"])
-
-    father_col = find_column(marks_df, ["father"])
-    adm_col = find_column(marks_df, ["admission"])
-
-    if not student_col:
-        st.error("Student column not found")
-        return
+    # Student column
+    student_col = [c for c in marks_df.columns if "name" in c.lower()][0]
 
     student = st.selectbox("Student", ["--"] + marks_df[student_col].dropna().astype(str).tolist())
     if student == "--": return
 
-    row = marks_df[marks_df[student_col].astype(str) == student].iloc[0]
+    row = marks_df[marks_df[student_col].astype(str)==student].iloc[0]
 
-    # ---------------- MATCH ATTENDANCE ----------------
-    att_row = None
+    # ---------------- MATCH ATTENDANCE (COLUMN A) ----------------
+    roll_marks = clean(row[marks_df.columns[0]])
+    att_df["_roll_clean"] = att_df[att_df.columns[0]].astype(str).apply(clean)
 
-    if roll_col_marks and roll_col_att:
-        roll_value = clean(row[roll_col_marks])
+    match = att_df[att_df["_roll_clean"] == roll_marks]
+    att_row = match.iloc[0] if not match.empty else None
 
-        match = att_df[
-            att_df[roll_col_att].astype(str).apply(clean) == roll_value
-        ]
-
-        if not match.empty:
-            att_row = match.iloc[0]
-
-    # fallback to name
-    if att_row is None:
-        att_student_col = find_column(att_df, ["student", "name"])
-
-        if att_student_col:
-            match = att_df[
-                att_df[att_student_col].astype(str).apply(clean) == clean(student)
-            ]
-
-            if not match.empty:
-                att_row = match.iloc[0]
-
-    # ---------------- STUDENT DETAILS ----------------
+    # ---------------- DETAILS ----------------
     st.subheader("👤 Student Details")
     st.write(f"**Name:** {row[student_col]}")
-    if adm_col: st.write(f"**Admission No:** {row[adm_col]}")
-    if father_col: st.write(f"**Father Name:** {row[father_col]}")
 
     # ---------------- ATTENDANCE ----------------
     st.subheader("📅 Attendance")
 
     if att_row is None:
-        attendance_df = pd.DataFrame({
-            " ": ["Present", "Out of", "Percentage"],
-            "Semester 2": ["N/A"]*3,
-            "Semester 3": ["N/A"]*3,
-            "Semester 4": ["N/A"]*3,
-            "Semester 5": ["N/A"]*3,
-            "Semester 6": ["N/A"]*3,
-        })
+        att_table = [["N/A"]*5]*3
     else:
-        # ⚠️ SAFE ACCESS (no crash even if column mismatch)
-        attendance_df = pd.DataFrame({
-            " ": ["Present", "Out of", "Percentage"],
+        def g(k): return att_row.get(k, None)
 
-            "Semester 2": [
-                safe(att_row.get("I")),
-                safe(att_row.get("I6")),
-                safe_percent(att_row.get("J"))
-            ],
+        att_table = [
+            [safe(g("I")), safe(g("S")), safe(g("AC")), safe(g("AM")), safe(g("AW"))],
+            [safe(g("I6")), safe(g("S6")), safe(g("AC6")), safe(g("AM6")), safe(g("AW6"))],
+            [safe_percent(g("J")), safe_percent(g("T")), safe_percent(g("AD")), safe_percent(g("AN")), safe_percent(g("AX"))]
+        ]
 
-            "Semester 3": [
-                safe(att_row.get("S")),
-                safe(att_row.get("S6")),
-                safe_percent(att_row.get("T"))
-            ],
-
-            "Semester 4": [
-                safe(att_row.get("AC")),
-                safe(att_row.get("AC6")),
-                safe_percent(att_row.get("AD"))
-            ],
-
-            "Semester 5": [
-                safe(att_row.get("AM")),
-                safe(att_row.get("AM6")),
-                safe_percent(att_row.get("AN"))
-            ],
-
-            "Semester 6": [
-                safe(att_row.get("AW")),
-                safe(att_row.get("AW6")),
-                safe_percent(att_row.get("AX"))
-            ],
-        })
-
-    st.table(attendance_df)
+    st.table(pd.DataFrame(att_table,
+        columns=["Sem2","Sem3","Sem4","Sem5","Sem6"],
+        index=["Present","Out of","%"]
+    ))
 
     # ---------------- MARKS ----------------
-    sessional_cols = marks_df.columns[16:21]
-    put_cols = marks_df.columns[23:28]
+    sessional = marks_df.columns[16:21]
+    put = marks_df.columns[23:28]
 
-    subjects, s_marks, p_marks = [], [], []
+    subjects, sm, pm = [], [], []
 
-    for i in range(len(sessional_cols)):
-        s = sessional_cols[i]
-        p = put_cols[i]
+    for i in range(len(sessional)):
+        s = sessional[i]; p = put[i]
+        sv, pv = to_float(row[s]), to_float(row[p])
 
-        subject = str(s).strip()
-        sv = to_float(row[s])
-        pv = to_float(row[p])
+        if sv is None and pv is None: continue
 
-        if subject == "" and sv is None and pv is None:
-            continue
+        subjects.append(s)
+        sm.append(format_mark(sv))
+        pm.append(format_mark(pv))
 
-        subjects.append(subject)
-        s_marks.append(format_mark(sv))
-        p_marks.append(format_mark(pv))
+    if "VBSPU" in uni: smax, pmax = 30,70
+    else: smax, pmax = 25,75
 
-    # Rules
-    if "MGKVP" in uni.upper():
-        sm, pm = 25, 75
-    elif "VBSPU" in uni.upper():
-        sm, pm = 30, 70
-    else:
-        sm, pm = 25, 75
-
-    s_total = sum([x for x in s_marks if isinstance(x, (int, float))])
-    p_total = sum([x for x in p_marks if isinstance(x, (int, float))])
+    stotal = sum([x for x in sm if isinstance(x,(int,float))])
+    ptotal = sum([x for x in pm if isinstance(x,(int,float))])
 
     n = len(subjects)
-    s_max = n * sm
-    p_max = n * pm
+    sp = round(stotal/(n*smax)*100,2) if n else 0
+    pp = round(ptotal/(n*pmax)*100,2) if n else 0
 
-    s_pct = round((s_total / s_max) * 100, 2) if s_max else 0
-    p_pct = round((p_total / p_max) * 100, 2) if p_max else 0
-
-    data = []
-    for i in range(n):
-        data.append({
-            "Subject": subjects[i],
-            "Sessional": s_marks[i],
-            "PUT": p_marks[i]
-        })
-
-    data.append({"Subject": "Total", "Sessional": s_total, "PUT": p_total})
-    data.append({"Subject": "Percentage", "Sessional": f"{s_pct}%", "PUT": f"{p_pct}%"})
+    data = [{"Subject":subjects[i],"Sessional":sm[i],"PUT":pm[i]} for i in range(n)]
+    data += [
+        {"Subject":"Total","Sessional":stotal,"PUT":ptotal},
+        {"Subject":"Percentage","Sessional":f"{sp}%","PUT":f"{pp}%"}
+    ]
 
     st.subheader("📊 Result")
     st.table(pd.DataFrame(data))
 
     # ---------------- PRINT ----------------
     st.markdown("---")
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        if st.button("🖨️ Print Marksheet"):
-            components.html("<script>window.print();</script>", height=0)
+    if st.button("🖨️ Print Marksheet"):
+        components.html("<script>window.print();</script>", height=0)
 
 
 if __name__ == "__main__":
