@@ -40,10 +40,8 @@ def to_float(val):
     try:
         if pd.isna(val): return None
     except: pass
-
     s = str(val).strip()
     if s == "": return None
-
     try:
         return float(s.replace(",", "").replace("%", ""))
     except:
@@ -94,7 +92,7 @@ def main():
     except:
         pass
 
-    # Load sheets
+    # Load marksheet sheets
     marks_xls = load_excel(MARKSHEET_FILE_ID)
     parsed = [p for p in (parse_sheet(s) for s in marks_xls.sheet_names) if p]
 
@@ -115,24 +113,41 @@ def main():
     marks_df.columns = [str(c).strip() for c in marks_df.columns]
     att_df.columns = [str(c).strip() for c in att_df.columns]
 
-    # Columns
+    # Detect columns
     student_col = find_column(marks_df, ["student", "name"])
+    roll_col_marks = find_column(marks_df, ["roll"])
     father_col = find_column(marks_df, ["father"])
     adm_col = find_column(marks_df, ["admission"])
 
     if not student_col:
-        st.error("Student column not found")
+        st.error("Student column not found in marksheet")
         return
 
-    # Student selection
+    # Student select
     student = st.selectbox("Student", ["--"] + marks_df[student_col].dropna().astype(str).tolist())
     if student == "--": return
 
     row = marks_df[marks_df[student_col].astype(str) == student].iloc[0]
 
-    # Match attendance row
-    att_row = att_df[att_df[student_col].astype(str) == student]
-    att_row = att_row.iloc[0] if not att_row.empty else None
+    # ---------------- MATCH ATTENDANCE ----------------
+    att_row = None
+
+    # Try Roll No match (preferred)
+    roll_col_att = find_column(att_df, ["roll"])
+
+    if roll_col_marks and roll_col_att:
+        roll_value = row[roll_col_marks]
+        match = att_df[att_df[roll_col_att] == roll_value]
+        if not match.empty:
+            att_row = match.iloc[0]
+
+    # Fallback: match by name
+    if att_row is None:
+        att_student_col = find_column(att_df, ["student", "name"])
+        if att_student_col:
+            match = att_df[att_df[att_student_col].astype(str) == student]
+            if not match.empty:
+                att_row = match.iloc[0]
 
     # ---------------- STUDENT DETAILS ----------------
     st.subheader("👤 Student Details")
