@@ -83,6 +83,13 @@ def format_mark(val):
     return "ABS" if val is None else val
 
 
+def clean(val):
+    try:
+        return str(val).strip().lower()
+    except:
+        return ""
+
+
 # ---------------- MAIN ----------------
 def main():
 
@@ -92,15 +99,13 @@ def main():
     except:
         pass
 
-    # Load marksheet sheets
+    # Load marksheet
     marks_xls = load_excel(MARKSHEET_FILE_ID)
     parsed = [p for p in (parse_sheet(s) for s in marks_xls.sheet_names) if p]
 
-    # University
     uni = st.selectbox("University", ["--"] + sorted({u for u, y, o in parsed}))
     if uni == "--": return
 
-    # Year
     year = st.selectbox("Admission Year", ["--"] + sorted({y for u, y, o in parsed if u == uni}))
     if year == "--": return
 
@@ -116,14 +121,15 @@ def main():
     # Detect columns
     student_col = find_column(marks_df, ["student", "name"])
     roll_col_marks = find_column(marks_df, ["roll"])
+    roll_col_att = find_column(att_df, ["roll"])
+
     father_col = find_column(marks_df, ["father"])
     adm_col = find_column(marks_df, ["admission"])
 
     if not student_col:
-        st.error("Student column not found in marksheet")
+        st.error("Student column not found")
         return
 
-    # Student select
     student = st.selectbox("Student", ["--"] + marks_df[student_col].dropna().astype(str).tolist())
     if student == "--": return
 
@@ -132,20 +138,25 @@ def main():
     # ---------------- MATCH ATTENDANCE ----------------
     att_row = None
 
-    # Try Roll No match (preferred)
-    roll_col_att = find_column(att_df, ["roll"])
-
     if roll_col_marks and roll_col_att:
-        roll_value = row[roll_col_marks]
-        match = att_df[att_df[roll_col_att] == roll_value]
+        roll_value = clean(row[roll_col_marks])
+
+        match = att_df[
+            att_df[roll_col_att].astype(str).apply(clean) == roll_value
+        ]
+
         if not match.empty:
             att_row = match.iloc[0]
 
-    # Fallback: match by name
+    # fallback to name
     if att_row is None:
         att_student_col = find_column(att_df, ["student", "name"])
+
         if att_student_col:
-            match = att_df[att_df[att_student_col].astype(str) == student]
+            match = att_df[
+                att_df[att_student_col].astype(str).apply(clean) == clean(student)
+            ]
+
             if not match.empty:
                 att_row = match.iloc[0]
 
@@ -168,13 +179,39 @@ def main():
             "Semester 6": ["N/A"]*3,
         })
     else:
+        # ⚠️ SAFE ACCESS (no crash even if column mismatch)
         attendance_df = pd.DataFrame({
             " ": ["Present", "Out of", "Percentage"],
-            "Semester 2": [safe(att_row.get("I")), safe(att_row.get("I6")), safe_percent(att_row.get("J"))],
-            "Semester 3": [safe(att_row.get("S")), safe(att_row.get("S6")), safe_percent(att_row.get("T"))],
-            "Semester 4": [safe(att_row.get("AC")), safe(att_row.get("AC6")), safe_percent(att_row.get("AD"))],
-            "Semester 5": [safe(att_row.get("AM")), safe(att_row.get("AM6")), safe_percent(att_row.get("AN"))],
-            "Semester 6": [safe(att_row.get("AW")), safe(att_row.get("AW6")), safe_percent(att_row.get("AX"))],
+
+            "Semester 2": [
+                safe(att_row.get("I")),
+                safe(att_row.get("I6")),
+                safe_percent(att_row.get("J"))
+            ],
+
+            "Semester 3": [
+                safe(att_row.get("S")),
+                safe(att_row.get("S6")),
+                safe_percent(att_row.get("T"))
+            ],
+
+            "Semester 4": [
+                safe(att_row.get("AC")),
+                safe(att_row.get("AC6")),
+                safe_percent(att_row.get("AD"))
+            ],
+
+            "Semester 5": [
+                safe(att_row.get("AM")),
+                safe(att_row.get("AM6")),
+                safe_percent(att_row.get("AN"))
+            ],
+
+            "Semester 6": [
+                safe(att_row.get("AW")),
+                safe(att_row.get("AW6")),
+                safe_percent(att_row.get("AX"))
+            ],
         })
 
     st.table(attendance_df)
@@ -208,7 +245,6 @@ def main():
     else:
         sm, pm = 25, 75
 
-    # Totals
     s_total = sum([x for x in s_marks if isinstance(x, (int, float))])
     p_total = sum([x for x in p_marks if isinstance(x, (int, float))])
 
@@ -219,7 +255,6 @@ def main():
     s_pct = round((s_total / s_max) * 100, 2) if s_max else 0
     p_pct = round((p_total / p_max) * 100, 2) if p_max else 0
 
-    # Table
     data = []
     for i in range(n):
         data.append({
