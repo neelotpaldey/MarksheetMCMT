@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import streamlit.components.v1 as components
 
 def main():
     st.set_page_config(page_title="Student Report", layout="wide")
@@ -69,19 +70,15 @@ def main():
     st.markdown("---")
 
     # ---------------- PRINT BUTTON ----------------
-    st.markdown("""
-    <button onclick="window.print()" 
-    style="
-        background-color:#d90429;
-        color:white;
-        padding:12px 24px;
-        border:none;
-        border-radius:6px;
-        font-size:16px;
-        cursor:pointer;">
-        🖨️ Print / Save as PDF
-    </button>
-    """, unsafe_allow_html=True)
+    if st.button("🖨️ Print / Save as PDF"):
+        components.html(
+            """
+            <script>
+                window.print();
+            </script>
+            """,
+            height=0,
+        )
 
 
 if __name__ == "__main__":
