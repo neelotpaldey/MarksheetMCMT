@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 
 def load_sheet(sheet_name):
-    sheet_id = "1SId7izPI1if7v0npmNVc-ImAF4cTYLCO5hK6XjR9cmM"
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+    #sheet_id = "1SId7izPI1if7v0npmNVc-ImAF4cTYLCO5hK6XjR9cmM"
+    url = f"https://docs.google.com/spreadsheets/d/1cH7emSI1m0VZf205GADUqj0sANHZAU0jnttpS4HYCWg/edit?usp=sharing"
     df = pd.read_csv(url)
     return df
 
