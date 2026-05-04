@@ -1,67 +1,85 @@
+# main.py
 import streamlit as st
 import pandas as pd
 import requests
 import io
+import unicodedata
 import streamlit.components.v1 as components
 
 # ---------------- CONFIG ----------------
-GOOGLE_SHEET_FILE_ID = "1cH7emSI1m0VZf205GADUqj0sANHZAU0jnttpS4HYCWg"
+GOOGLE_SHEET_FILE_ID = "1MKgETtpCs4MOTL8ErQuPIjIR2peBXADx"
+
+COL_STUDENT_NAME = "Student Name"
+COL_ADMISSION_NO = "Admission No."
+COL_FATHER_NAME = "Father Name"
+
+st.set_page_config(page_title="Marksheet Viewer", layout="wide")
+
 
 # ---------------- GOOGLE SHEET LOADER ----------------
 @st.cache_data(ttl=300)
-def download_sheet(file_id):
+def download_sheet_xlsx(file_id: str) -> bytes:
     url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
-    r = requests.get(url)
+    r = requests.get(url, timeout=30)
     r.raise_for_status()
     return r.content
 
 
 def load_excel(file_id):
-    content = download_sheet(file_id)
+    content = download_sheet_xlsx(file_id)
     return pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
 
 
 def read_sheet(file_id, sheet_name):
-    content = download_sheet(file_id)
-    return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, engine="openpyxl")
+    content = download_sheet_xlsx(file_id)
+    return pd.read_excel(
+        io.BytesIO(content),
+        sheet_name=sheet_name,
+        skiprows=6,   # 🔥 important
+        engine="openpyxl"
+    )
 
 
-# ---------------- PARSE SHEET NAME ----------------
-def parse_sheet(name):
-    parts = name.rsplit(" ", 1)
+# ---------------- HELPERS ----------------
+def to_float(val):
+    try:
+        if pd.isna(val):
+            return None
+    except:
+        pass
+
+    s = str(val).strip()
+    if s == "":
+        return None
+
+    s = unicodedata.normalize("NFKC", s)
+
+    try:
+        return float(s.replace(",", "").replace("%", ""))
+    except:
+        return None
+
+
+def parse_sheet(sheetname: str):
+    parts = sheetname.rsplit(" ", 1)
     if len(parts) == 2 and parts[1].isdigit():
-        return parts[0], parts[1], name
-    return name, "", name
+        return parts[0], parts[1], sheetname
+    return sheetname, "", sheetname
 
 
 # ---------------- MAIN ----------------
 def main():
-    st.set_page_config(page_title="Student Report", layout="wide")
 
-    # -------- PRINT STYLE --------
-    st.markdown("""
-    <style>
-    @media print {
-        header, footer, .stDeployButton, .stToolbar {
-            display: none !important;
-        }
-        button {
-            display: none !important;
-        }
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    st.title("📄 Marksheet Viewer")
 
-    # -------- HEADER --------
-    try:
-        st.image("banner.png", use_container_width=True)
-    except:
-        pass
+    # 🖨️ Print Button
+    if st.button("🖨️ Print Marksheet"):
+        components.html(
+            "<script>window.print();</script>",
+            height=0,
+        )
 
-    st.markdown("<h3 style='text-align:center;'>SMART ATTENDANCE SYSTEM</h3>", unsafe_allow_html=True)
-    st.markdown("---")
-
-    # -------- LOAD SHEETS --------
+    # Load sheets
     try:
         xls = load_excel(GOOGLE_SHEET_FILE_ID)
         sheets = xls.sheet_names
@@ -70,77 +88,116 @@ def main():
         return
 
     parsed = [parse_sheet(s) for s in sheets]
-    universities = sorted({u for u, sem, _ in parsed})
 
-    col1, col2 = st.columns(2)
+    # ---------- University ----------
+    universities = sorted({u for u, y, o in parsed})
+    uni = st.selectbox("Select University", ["-- choose --"] + universities)
+    if uni == "-- choose --":
+        return
 
-    with col1:
-        uni = st.selectbox("University", universities)
+    # ---------- Admission Year ----------
+    years = sorted({y for u, y, o in parsed if u == uni})
+    year = st.selectbox("Select Admission Year", ["-- choose --"] + years)
+    if year == "-- choose --":
+        return
 
-    with col2:
-        sems = sorted({sem for u, sem, _ in parsed if u == uni})
-        sem = st.selectbox("Semester", sems)
+    # Get sheet
+    sheet_name = [o for u, y, o in parsed if u == uni and y == year][0]
 
-    sheet_name = [orig for u, s, orig in parsed if u == uni and s == sem][0]
-
-    # -------- LOAD SHEET DATA --------
+    # Load data
     df = read_sheet(GOOGLE_SHEET_FILE_ID, sheet_name)
+    df.columns = [str(c).strip() for c in df.columns]
 
-    # -------- STUDENT LIST (Column C, row 7 onwards) --------
-    students_df = df.iloc[6:, 2].dropna()
-    students = students_df.tolist()
+    # ---------- Student ----------
+    students = df[COL_STUDENT_NAME].dropna().astype(str).tolist()
+    student = st.selectbox("Select Student", ["-- choose --"] + students)
+    if student == "-- choose --":
+        return
 
-    student = st.selectbox("Select Student", students)
+    row = df[df[COL_STUDENT_NAME].astype(str) == student].iloc[0]
 
-    # -------- GET ROW INDEX --------
-    row_index = students_df[students_df == student].index[0]
+    # ---------- COLUMN INDEX ----------
+    sessional_cols = df.columns[16:21]   # Q-U
+    put_cols = df.columns[23:28]         # X-AB
 
-    # -------- STUDENT DETAILS --------
-    roll_no = df.iloc[row_index, 0]
-    admission_no = df.iloc[row_index, 1]
-    name = df.iloc[row_index, 2]
-    father_name = df.iloc[row_index, 3] if len(df.columns) > 3 else ""
+    sessional_marks = []
+    put_marks = []
 
-    st.markdown("---")
-    st.subheader("Student Details")
+    sessional_subjects = []
+    put_subjects = []
 
-    c1, c2 = st.columns(2)
+    # ---------- SESSIONAL ----------
+    for col in sessional_cols:
+        subject = str(col).strip()
+        value = to_float(row[col])
 
-    with c1:
-        st.text_input("Name", name, disabled=True)
-        st.text_input("Admission No", admission_no, disabled=True)
-        st.text_input("Father Name", father_name, disabled=True)
+        if subject != "" and value is not None:
+            sessional_subjects.append(subject)
+            sessional_marks.append(value)
 
-    with c2:
-        st.text_input("Roll No", roll_no, disabled=True)
+    # ---------- PUT ----------
+    for col in put_cols:
+        subject = str(col).strip()
+        value = to_float(row[col])
 
-    st.markdown("---")
+        if subject != "" and value is not None:
+            put_subjects.append(subject)
+            put_marks.append(value)
 
-    # -------- SUBJECTS (Row 6) --------
-    subjects = df.iloc[5, 13:18].tolist()   # N–R
+    # ---------- UNIVERSITY RULE ----------
+    if "MGKVP" in uni.upper():
+        sess_max = 25
+        put_max = 75
+    elif "VBSPU" in uni.upper():
+        sess_max = 30
+        put_max = 70
+    else:
+        sess_max = 25
+        put_max = 75
 
-    # -------- MARKS --------
-    sessional_marks = df.iloc[row_index, 13:18]   # N–R
-    put_marks = df.iloc[row_index, 20:25]         # U–Y
+    # ---------- CALCULATION ----------
+    total_obtained = sum(sessional_marks) + sum(put_marks)
 
-    # -------- RESULT TABLE --------
-    st.subheader("Result")
+    total_max = (len(sessional_marks) * sess_max) + (len(put_marks) * put_max)
 
-    result_df = pd.DataFrame({
-        "Subject": subjects,
-        "Sessional": sessional_marks.values,
-        "PUT": put_marks.values
+    percentage = round((total_obtained / total_max) * 100, 2) if total_max else 0
+
+    # ---------- DISPLAY ----------
+    st.subheader("👤 Student Details")
+    st.write(f"**Name:** {row[COL_STUDENT_NAME]}")
+    st.write(f"**Admission No:** {row[COL_ADMISSION_NO]}")
+    if COL_FATHER_NAME in df.columns:
+        st.write(f"**Father Name:** {row[COL_FATHER_NAME]}")
+
+    # ---------- SESSIONAL TABLE ----------
+    st.subheader("📘 Sessional Marks")
+
+    sess_df = pd.DataFrame({
+        "Subject": sessional_subjects,
+        "Marks": sessional_marks
     })
 
-    result_df = result_df.fillna("")
+    st.table(sess_df)
 
-    st.table(result_df)
+    # ---------- PUT TABLE ----------
+    st.subheader("📗 PUT Marks")
 
-    st.markdown("---")
+    put_df = pd.DataFrame({
+        "Subject": put_subjects,
+        "Marks": put_marks
+    })
 
-    # -------- PRINT BUTTON --------
-    if st.button("🖨️ Print / Save as PDF"):
-        components.html("<script>window.print();</script>", height=0)
+    st.table(put_df)
+
+    # ---------- TOTAL ----------
+    st.subheader("📊 Result Summary")
+
+    summary_df = pd.DataFrame({
+        "Metric": ["Total Obtained", "Total Maximum", "Percentage"],
+        "Value": [total_obtained, total_max, f"{percentage}%"]
+    })
+
+    st.table(summary_df)
 
 
 if __name__ == "__main__":
