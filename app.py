@@ -5,6 +5,7 @@ import requests
 import io
 import unicodedata
 import streamlit.components.v1 as components
+import re
 
 # ---------------- CONFIG ----------------
 MARKSHEET_FILE_ID = "1MKgETtpCs4MOTL8ErQuPIjIR2peBXADx"
@@ -20,8 +21,8 @@ def download(file_id):
     return requests.get(url).content
 
 
-def read(file_id, sheet):
-    return pd.read_excel(io.BytesIO(download(file_id)), sheet_name=sheet, skiprows=6)
+def read_raw(file_id, sheet):
+    return pd.read_excel(io.BytesIO(download(file_id)), sheet_name=sheet, header=None)
 
 
 # ---------------- HELPERS ----------------
@@ -57,12 +58,36 @@ def to_float(val):
 
 
 def format_mark(val):
-    return "ABS" if val is None else val
+    return "N/A" if val is None else val
 
 
 def parse_sheet(name):
     parts = name.rsplit(" ", 1)
     return (parts[0], parts[1], name) if len(parts)==2 and parts[1].isdigit() else None
+
+
+def excel_col_to_idx(col):
+    idx = 0
+    for ch in col.upper():
+        if "A" <= ch <= "Z":
+            idx = idx * 26 + (ord(ch) - ord("A") + 1)
+    return idx - 1
+
+
+def looks_numeric_roll(val):
+    if pd.isna(val):
+        return False
+    s = str(val).strip()
+    return bool(s) and bool(re.fullmatch(r"\d+(\.0+)?", s))
+
+
+def find_first_data_row(df, roll_col, name_col):
+    for i in range(len(df)):
+        roll_val = df.iat[i, roll_col] if roll_col < df.shape[1] else None
+        name_val = df.iat[i, name_col] if name_col < df.shape[1] else None
+        if looks_numeric_roll(roll_val) and not pd.isna(name_val) and str(name_val).strip():
+            return i
+    return None
 
 
 # ---------------- MAIN ----------------
@@ -86,31 +111,61 @@ def main():
 
     sheet = [o for u,y,o in parsed if u==uni and y==year][0]
 
-    # Load data
-    marks_df = read(MARKSHEET_FILE_ID, sheet)
-    att_df = read(ATTENDANCE_FILE_ID, sheet)
+    # Load raw sheets
+    marks_df = read_raw(MARKSHEET_FILE_ID, sheet)
+    att_df = read_raw(ATTENDANCE_FILE_ID, sheet)
 
-    marks_df.columns = [str(c).strip() for c in marks_df.columns]
-    att_df.columns = [str(c).strip() for c in att_df.columns]
+    # Fixed columns from the template image
+    marks_roll_col = excel_col_to_idx("A")
+    marks_name_col = excel_col_to_idx("D")
+    marks_admission_col = excel_col_to_idx("B")
+    marks_univ_roll_col = excel_col_to_idx("C")
+    marks_father_col = excel_col_to_idx("E")
 
-    # Student column
-    student_col = [c for c in marks_df.columns if "name" in c.lower()][0]
+    sessional_cols = [excel_col_to_idx(c) for c in ["Q", "R", "S", "T", "U"]]
+    put_cols = [excel_col_to_idx(c) for c in ["X", "Y", "Z", "AA", "AB"]]
 
-    student = st.selectbox("Student", ["--"] + marks_df[student_col].dropna().astype(str).tolist())
+    att_roll_col = excel_col_to_idx("A")
+    att_name_col = excel_col_to_idx("B")
+    att_present_cols = [excel_col_to_idx(c) for c in ["I", "S", "AC", "AM", "AW"]]
+    att_out_of_cols = [excel_col_to_idx(c) for c in ["I", "S", "AC", "AM", "AW"]]
+    att_percent_cols = [excel_col_to_idx(c) for c in ["J", "T", "AD", "AN", "AX"]]
+
+    marks_start = find_first_data_row(marks_df, marks_roll_col, marks_name_col)
+    att_start = find_first_data_row(att_df, att_roll_col, att_name_col)
+
+    if marks_start is None or att_start is None:
+        st.error("Could not detect student rows in one or more sheets.")
+        return
+
+    marks_header = marks_start - 1 if marks_start > 0 else marks_start
+
+    marks_data = marks_df.iloc[marks_start:].copy()
+    marks_data = marks_data[
+        marks_data[marks_name_col].notna() &
+        marks_data[marks_name_col].astype(str).str.strip().ne("")
+    ]
+
+    student = st.selectbox("Student", ["--"] + marks_data[marks_name_col].astype(str).tolist())
     if student == "--": return
 
-    row = marks_df[marks_df[student_col].astype(str)==student].iloc[0]
+    row = marks_data[marks_data[marks_name_col].astype(str) == student].iloc[0]
 
     # ---------------- MATCH ATTENDANCE (COLUMN A) ----------------
-    roll_marks = clean(row[marks_df.columns[0]])
-    att_df["_roll_clean"] = att_df[att_df.columns[0]].astype(str).apply(clean)
+    roll_marks = clean(row[marks_roll_col])
+    att_data = att_df.iloc[att_start:].copy()
+    att_data["_roll_clean"] = att_data[att_roll_col].astype(str).apply(clean)
 
-    match = att_df[att_df["_roll_clean"] == roll_marks]
+    match = att_data[att_data["_roll_clean"] == roll_marks]
     att_row = match.iloc[0] if not match.empty else None
 
     # ---------------- DETAILS ----------------
     st.subheader("👤 Student Details")
-    st.write(f"**Name:** {row[student_col]}")
+    st.write(f"**Roll Number:** {safe(row[marks_roll_col])}")
+    st.write(f"**Admission Number:** {safe(row[marks_admission_col])}")
+    st.write(f"**University Roll No:** {safe(row[marks_univ_roll_col])}")
+    st.write(f"**Name:** {safe(row[marks_name_col])}")
+    st.write(f"**Father's Name:** {safe(row[marks_father_col])}")
 
     # ---------------- ATTENDANCE ----------------
     st.subheader("📅 Attendance")
@@ -118,12 +173,18 @@ def main():
     if att_row is None:
         att_table = [["N/A"]*5]*3
     else:
-        def g(k): return att_row.get(k, None)
+        out_row_idx = att_start - 1 if att_start > 0 else att_start
+        out_row = att_df.iloc[out_row_idx] if out_row_idx < len(att_df) else None
+
+        def g_row(r, col_idx):
+            if r is None or col_idx >= len(r):
+                return None
+            return r.iloc[col_idx]
 
         att_table = [
-            [safe(g("I")), safe(g("S")), safe(g("AC")), safe(g("AM")), safe(g("AW"))],
-            [safe(g("I6")), safe(g("S6")), safe(g("AC6")), safe(g("AM6")), safe(g("AW6"))],
-            [safe_percent(g("J")), safe_percent(g("T")), safe_percent(g("AD")), safe_percent(g("AN")), safe_percent(g("AX"))]
+            [safe(g_row(att_row, c)) for c in att_present_cols],
+            [safe(g_row(out_row, c)) for c in att_out_of_cols],
+            [safe_percent(g_row(att_row, c)) for c in att_percent_cols]
         ]
 
     st.table(pd.DataFrame(att_table,
@@ -132,18 +193,23 @@ def main():
     ))
 
     # ---------------- MARKS ----------------
-    sessional = marks_df.columns[16:21]
-    put = marks_df.columns[23:28]
+    sessional = sessional_cols
+    put = put_cols
 
     subjects, sm, pm = [], [], []
 
     for i in range(len(sessional)):
-        s = sessional[i]; p = put[i]
-        sv, pv = to_float(row[s]), to_float(row[p])
+        s_col = sessional[i]
+        p_col = put[i]
+        sv, pv = to_float(row[s_col]), to_float(row[p_col])
 
         if sv is None and pv is None: continue
 
-        subjects.append(s)
+        subject_name = marks_df.iat[marks_header, s_col] if marks_header is not None and s_col < marks_df.shape[1] else f"Subject {i+1}"
+        if pd.isna(subject_name) or str(subject_name).strip() == "":
+            subject_name = f"Subject {i+1}"
+
+        subjects.append(str(subject_name).strip())
         sm.append(format_mark(sv))
         pm.append(format_mark(pv))
 
