@@ -1,84 +1,74 @@
 import streamlit as st
 import pandas as pd
-import streamlit.components.v1 as components
+
+def load_sheet(sheet_name):
+    sheet_id = "1SId7izPI1if7v0npmNVc-ImAF4cTYLCO5hK6XjR9cmM"
+    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+    df = pd.read_csv(url)
+    return df
+
 
 def main():
     st.set_page_config(page_title="Student Report", layout="wide")
-
-    # ---------------- PRINT STYLE ----------------
-    st.markdown("""
-    <style>
-    @media print {
-        header, footer, .stDeployButton, .stToolbar {
-            display: none !important;
-        }
-        button {
-            display: none !important;
-        }
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
     # ---------------- BANNER ----------------
     st.image("banner.png", use_container_width=True)
     st.markdown("---")
 
-    # ---------------- STUDENT DETAILS ----------------
-    st.subheader("Student Details")
+    # ---------------- LOGIN / SELECTION ----------------
+    st.subheader("Select Details")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        name = st.text_input("Name")
-        father_name = st.text_input("Father's Name")
-        admission_no = st.text_input("Admission Number")
+        university = st.selectbox("University", ["VBSPU", "MGKVP"])
 
     with col2:
-        roll_no = st.text_input("Roll Number")
-        university_roll = st.text_input("University Roll No")
+        semester = st.selectbox("Semester", ["2", "4", "6"])
+
+    sheet_name = f"{university} {semester}"
 
     st.markdown("---")
 
-    # ---------------- ATTENDANCE ----------------
-    st.subheader("Attendance")
+    # ---------------- LOAD DATA ----------------
+    try:
+        df = load_sheet(sheet_name)
 
-    attendance_df = pd.DataFrame({
-        "Semester 2": ["", "", ""],
-        "Semester 3": ["", "", ""],
-        "Semester 4": ["", "", ""],
-        "Semester 5": ["", "", ""],
-        "Semester 6": ["", "", ""],
-    }, index=["Present", "Out of", "Percentage"])
+        # Clean dataframe (remove empty rows)
+        df = df.dropna(how='all')
 
-    attendance = st.data_editor(attendance_df, use_container_width=True)
+        # ---------------- STUDENT LIST ----------------
+        names = df.iloc[6:, 2].dropna().tolist()  # Column C, row 7+
 
-    st.markdown("---")
+        student = st.selectbox("Select Student", names)
 
-    # ---------------- RESULT ----------------
-    st.subheader("Result")
+        if student:
+            row = df[df.iloc[:, 2] == student].index[0]
 
-    result_df = pd.DataFrame({
-        "Subject": ["Subject 1", "Subject 2", "Subject 3", "Subject 4", "Subject 5"],
-        "Sessional": [""] * 5,
-        "PUT": [""] * 5,
-        "Subject Teacher": [""] * 5,
-        "Remark": [""] * 5
-    })
+            st.markdown("---")
+            st.subheader("Student Data")
 
-    result = st.data_editor(result_df, use_container_width=True)
+            # ---------------- ATTENDANCE / BASIC ----------------
+            st.write("Name:", student)
 
-    st.markdown("---")
+            # ---------------- SESSIONAL ----------------
+            st.subheader("Sessional Marks (N–R)")
 
-    # ---------------- PRINT BUTTON ----------------
-    if st.button("🖨️ Print / Save as PDF"):
-        components.html(
-            """
-            <script>
-                window.print();
-            </script>
-            """,
-            height=0,
-        )
+            sessional_cols = df.columns[13:18]
+            sessional_data = df.loc[row, sessional_cols]
+
+            st.table(pd.DataFrame([sessional_data.values], columns=sessional_cols))
+
+            # ---------------- PUT ----------------
+            st.subheader("PUT Marks (U–Y)")
+
+            put_cols = df.columns[20:25]
+            put_data = df.loc[row, put_cols]
+
+            st.table(pd.DataFrame([put_data.values], columns=put_cols))
+
+    except Exception as e:
+        st.error("Error loading sheet. Check sheet name or sharing settings.")
 
 
 if __name__ == "__main__":
