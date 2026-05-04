@@ -203,8 +203,6 @@ def main():
         p_col = put[i]
         sv, pv = to_float(row[s_col]), to_float(row[p_col])
 
-        if sv is None and pv is None: continue
-
         subject_name = marks_df.iat[marks_header, s_col] if marks_header is not None and s_col < marks_df.shape[1] else f"Subject {i+1}"
         if pd.isna(subject_name) or str(subject_name).strip() == "":
             subject_name = f"Subject {i+1}"
