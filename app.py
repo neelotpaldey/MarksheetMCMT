@@ -31,7 +31,7 @@ def read_sheet(file_id, sheet_name):
     return pd.read_excel(
         io.BytesIO(content),
         sheet_name=sheet_name,
-        skiprows=6,   # 🔥 header is row 7
+        skiprows=6,
         engine="openpyxl"
     )
 
@@ -83,18 +83,13 @@ def main():
 
     st.title("📄 Marksheet Viewer")
 
-    # ---------- Print Button ----------
+    # ---------- Print ----------
     if st.button("🖨️ Print Marksheet"):
         components.html("<script>window.print();</script>", height=0)
 
     # ---------- Load Sheets ----------
-    try:
-        xls = load_excel(GOOGLE_SHEET_FILE_ID)
-        sheets = xls.sheet_names
-    except Exception as e:
-        st.error(f"Error loading sheet: {e}")
-        return
-
+    xls = load_excel(GOOGLE_SHEET_FILE_ID)
+    sheets = xls.sheet_names
     parsed = [parse_sheet(s) for s in sheets]
 
     # ---------- University ----------
@@ -109,7 +104,6 @@ def main():
     if year == "-- choose --":
         return
 
-    # ---------- Get Sheet ----------
     sheet_name = [o for u, y, o in parsed if u == uni and y == year][0]
 
     # ---------- Load Data ----------
@@ -122,11 +116,11 @@ def main():
     father_col = find_column(df, ["father"])
 
     if not student_col:
-        st.error("Student name column not found")
-        st.write("Available columns:", df.columns.tolist())
+        st.error("Student column not found")
+        st.write(df.columns.tolist())
         return
 
-    # ---------- Student Selection ----------
+    # ---------- Student ----------
     students = df[student_col].dropna().astype(str).tolist()
     student = st.selectbox("Select Student", ["-- choose --"] + students)
     if student == "-- choose --":
@@ -137,10 +131,8 @@ def main():
     # ---------- Student Details ----------
     st.subheader("👤 Student Details")
     st.write(f"**Name:** {row[student_col]}")
-
     if admission_col:
         st.write(f"**Admission No:** {row[admission_col]}")
-
     if father_col:
         st.write(f"**Father Name:** {row[father_col]}")
 
@@ -158,33 +150,29 @@ def main():
 
     st.table(attendance_df)
 
-    # ---------- MARKS LOGIC ----------
-
+    # ---------- MARKS ----------
     sessional_cols = df.columns[16:21]   # Q-U
     put_cols = df.columns[23:28]         # X-AB
 
-    sessional_subjects, sessional_marks = [], []
-    put_subjects, put_marks = [], []
+    subjects, sess_marks, put_marks = [], [], []
 
-    # Sessional
-    for col in sessional_cols:
-        subject = str(col).strip()
-        value = to_float(row[col])
+    for i in range(len(sessional_cols)):
+        s_col = sessional_cols[i]
+        p_col = put_cols[i]
 
-        if subject != "" and value is not None:
-            sessional_subjects.append(subject)
-            sessional_marks.append(value)
+        subject = str(s_col).strip()
 
-    # PUT
-    for col in put_cols:
-        subject = str(col).strip()
-        value = to_float(row[col])
+        s_val = to_float(row[s_col])
+        p_val = to_float(row[p_col])
 
-        if subject != "" and value is not None:
-            put_subjects.append(subject)
-            put_marks.append(value)
+        if subject == "" or (s_val is None and p_val is None):
+            continue
 
-    # ---------- UNIVERSITY RULE ----------
+        subjects.append(subject)
+        sess_marks.append(s_val if s_val is not None else "")
+        put_marks.append(p_val if p_val is not None else "")
+
+    # ---------- RULE ----------
     if "MGKVP" in uni.upper():
         sess_max = 25
         put_max = 75
@@ -195,32 +183,43 @@ def main():
         sess_max = 25
         put_max = 75
 
-    # ---------- CALCULATION ----------
-    total_obtained = sum(sessional_marks) + sum(put_marks)
+    # ---------- TOTAL ----------
+    sessional_total = sum([x for x in sess_marks if isinstance(x, (int, float))])
+    put_total = sum([x for x in put_marks if isinstance(x, (int, float))])
 
-    total_max = (len(sessional_marks) * sess_max) + (len(put_marks) * put_max)
+    n = len(subjects)
+    sessional_max = n * sess_max
+    put_maximum = n * put_max
 
-    percentage = round((total_obtained / total_max) * 100, 2) if total_max else 0
+    sessional_percent = round((sessional_total / sessional_max) * 100, 2) if sessional_max else 0
+    put_percent = round((put_total / put_maximum) * 100, 2) if put_maximum else 0
 
-    # ---------- DISPLAY MARKS ----------
+    # ---------- TABLE ----------
+    table_data = []
 
-    st.subheader("📘 Sessional Marks")
-    st.table(pd.DataFrame({
-        "Subject": sessional_subjects,
-        "Marks": sessional_marks
-    }))
+    for i in range(len(subjects)):
+        table_data.append({
+            "Subject": subjects[i],
+            "Sessional Marks": sess_marks[i],
+            "PUT Marks": put_marks[i]
+        })
 
-    st.subheader("📗 PUT Marks")
-    st.table(pd.DataFrame({
-        "Subject": put_subjects,
-        "Marks": put_marks
-    }))
+    table_data.append({
+        "Subject": "Total",
+        "Sessional Marks": sessional_total,
+        "PUT Marks": put_total
+    })
 
-    st.subheader("📊 Result Summary")
-    st.table(pd.DataFrame({
-        "Metric": ["Total Obtained", "Total Maximum", "Percentage"],
-        "Value": [total_obtained, total_max, f"{percentage}%"]
-    }))
+    table_data.append({
+        "Subject": "Percentage",
+        "Sessional Marks": f"{sessional_percent}%",
+        "PUT Marks": f"{put_percent}%"
+    })
+
+    marks_df = pd.DataFrame(table_data)
+
+    st.subheader("📊 Result")
+    st.table(marks_df)
 
 
 if __name__ == "__main__":
