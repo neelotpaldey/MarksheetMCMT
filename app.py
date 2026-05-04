@@ -72,6 +72,12 @@ def find_column(df, keywords):
     return None
 
 
+def format_mark(val):
+    if val is None:
+        return "ABS"   # change to "ML" if needed
+    return val
+
+
 # ---------------- MAIN ----------------
 def main():
 
@@ -165,12 +171,12 @@ def main():
         s_val = to_float(row[s_col])
         p_val = to_float(row[p_col])
 
-        if subject == "" or (s_val is None and p_val is None):
+        if subject == "" and s_val is None and p_val is None:
             continue
 
         subjects.append(subject)
-        sess_marks.append(s_val if s_val is not None else "")
-        put_marks.append(p_val if p_val is not None else "")
+        sess_marks.append(format_mark(s_val))
+        put_marks.append(format_mark(p_val))
 
     # ---------- RULE ----------
     if "MGKVP" in uni.upper():
