@@ -9,10 +9,6 @@ import streamlit.components.v1 as components
 # ---------------- CONFIG ----------------
 GOOGLE_SHEET_FILE_ID = "1MKgETtpCs4MOTL8ErQuPIjIR2peBXADx"
 
-COL_STUDENT_NAME = "Student Name"
-COL_ADMISSION_NO = "Admission No."
-COL_FATHER_NAME = "Father Name"
-
 st.set_page_config(page_title="Marksheet Viewer", layout="wide")
 
 
@@ -35,7 +31,7 @@ def read_sheet(file_id, sheet_name):
     return pd.read_excel(
         io.BytesIO(content),
         sheet_name=sheet_name,
-        skiprows=6,   # 🔥 important
+        skiprows=6,   # 🔥 header is row 7
         engine="openpyxl"
     )
 
@@ -67,19 +63,31 @@ def parse_sheet(sheetname: str):
     return sheetname, "", sheetname
 
 
+def find_column(df, keywords):
+    for col in df.columns:
+        col_clean = col.strip().lower()
+        for key in keywords:
+            if key in col_clean:
+                return col
+    return None
+
+
 # ---------------- MAIN ----------------
 def main():
 
+    # ---------- Banner ----------
+    try:
+        st.image("banner.png", use_container_width=True)
+    except:
+        pass
+
     st.title("📄 Marksheet Viewer")
 
-    # 🖨️ Print Button
+    # ---------- Print Button ----------
     if st.button("🖨️ Print Marksheet"):
-        components.html(
-            "<script>window.print();</script>",
-            height=0,
-        )
+        components.html("<script>window.print();</script>", height=0)
 
-    # Load sheets
+    # ---------- Load Sheets ----------
     try:
         xls = load_excel(GOOGLE_SHEET_FILE_ID)
         sheets = xls.sheet_names
@@ -101,32 +109,64 @@ def main():
     if year == "-- choose --":
         return
 
-    # Get sheet
+    # ---------- Get Sheet ----------
     sheet_name = [o for u, y, o in parsed if u == uni and y == year][0]
 
-    # Load data
+    # ---------- Load Data ----------
     df = read_sheet(GOOGLE_SHEET_FILE_ID, sheet_name)
     df.columns = [str(c).strip() for c in df.columns]
 
-    # ---------- Student ----------
-    students = df[COL_STUDENT_NAME].dropna().astype(str).tolist()
+    # ---------- Detect Columns ----------
+    student_col = find_column(df, ["student", "name"])
+    admission_col = find_column(df, ["admission"])
+    father_col = find_column(df, ["father"])
+
+    if not student_col:
+        st.error("Student name column not found")
+        st.write("Available columns:", df.columns.tolist())
+        return
+
+    # ---------- Student Selection ----------
+    students = df[student_col].dropna().astype(str).tolist()
     student = st.selectbox("Select Student", ["-- choose --"] + students)
     if student == "-- choose --":
         return
 
-    row = df[df[COL_STUDENT_NAME].astype(str) == student].iloc[0]
+    row = df[df[student_col].astype(str) == student].iloc[0]
 
-    # ---------- COLUMN INDEX ----------
+    # ---------- Student Details ----------
+    st.subheader("👤 Student Details")
+    st.write(f"**Name:** {row[student_col]}")
+
+    if admission_col:
+        st.write(f"**Admission No:** {row[admission_col]}")
+
+    if father_col:
+        st.write(f"**Father Name:** {row[father_col]}")
+
+    # ---------- Attendance Placeholder ----------
+    st.subheader("📅 Attendance")
+
+    attendance_df = pd.DataFrame({
+        " ": ["Present", "Out of", "Percentage"],
+        "Semester 2": ["", "", ""],
+        "Semester 3": ["", "", ""],
+        "Semester 4": ["", "", ""],
+        "Semester 5": ["", "", ""],
+        "Semester 6": ["", "", ""],
+    })
+
+    st.table(attendance_df)
+
+    # ---------- MARKS LOGIC ----------
+
     sessional_cols = df.columns[16:21]   # Q-U
     put_cols = df.columns[23:28]         # X-AB
 
-    sessional_marks = []
-    put_marks = []
+    sessional_subjects, sessional_marks = [], []
+    put_subjects, put_marks = [], []
 
-    sessional_subjects = []
-    put_subjects = []
-
-    # ---------- SESSIONAL ----------
+    # Sessional
     for col in sessional_cols:
         subject = str(col).strip()
         value = to_float(row[col])
@@ -135,7 +175,7 @@ def main():
             sessional_subjects.append(subject)
             sessional_marks.append(value)
 
-    # ---------- PUT ----------
+    # PUT
     for col in put_cols:
         subject = str(col).strip()
         value = to_float(row[col])
@@ -162,42 +202,25 @@ def main():
 
     percentage = round((total_obtained / total_max) * 100, 2) if total_max else 0
 
-    # ---------- DISPLAY ----------
-    st.subheader("👤 Student Details")
-    st.write(f"**Name:** {row[COL_STUDENT_NAME]}")
-    st.write(f"**Admission No:** {row[COL_ADMISSION_NO]}")
-    if COL_FATHER_NAME in df.columns:
-        st.write(f"**Father Name:** {row[COL_FATHER_NAME]}")
+    # ---------- DISPLAY MARKS ----------
 
-    # ---------- SESSIONAL TABLE ----------
     st.subheader("📘 Sessional Marks")
-
-    sess_df = pd.DataFrame({
+    st.table(pd.DataFrame({
         "Subject": sessional_subjects,
         "Marks": sessional_marks
-    })
+    }))
 
-    st.table(sess_df)
-
-    # ---------- PUT TABLE ----------
     st.subheader("📗 PUT Marks")
-
-    put_df = pd.DataFrame({
+    st.table(pd.DataFrame({
         "Subject": put_subjects,
         "Marks": put_marks
-    })
+    }))
 
-    st.table(put_df)
-
-    # ---------- TOTAL ----------
     st.subheader("📊 Result Summary")
-
-    summary_df = pd.DataFrame({
+    st.table(pd.DataFrame({
         "Metric": ["Total Obtained", "Total Maximum", "Percentage"],
         "Value": [total_obtained, total_max, f"{percentage}%"]
-    })
-
-    st.table(summary_df)
+    }))
 
 
 if __name__ == "__main__":
